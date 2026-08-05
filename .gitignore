@@ -1,0 +1,33 @@
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+
+# Python bytecode and caches
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Packaging and build output
+*.egg-info/
+build/
+dist/
+
+# Test and coverage output
+.coverage
+.coverage.*
+htmlcov/
+
+# KAIOS-generated reports
+reports/
+
+# Local editor and operating-system files
+.DS_Store
+*.log

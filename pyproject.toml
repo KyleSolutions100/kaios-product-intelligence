@@ -1,0 +1,27 @@
+[project]
+name = "kaios"
+version = "0.1.0"
+description = "KAIOS Product Intelligence Research & Evidence Workflow"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.15,<1",
+    "httpx>=0.28,<1",
+    "beautifulsoup4>=4.12,<5",
+    "pydantic>=2,<3",
+    "python-dotenv>=1.0,<2",
+    "rich>=13,<14",
+    "litellm>=1.50,<2",
+    "pyyaml>=6,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-mock>=3,<4",
+    "responses>=0.25,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

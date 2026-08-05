@@ -1,0 +1,4 @@
+marketplace: "etsy"
+default_search_limit: 12
+output_dir: "reports"
+confidence_threshold: "Medium"
