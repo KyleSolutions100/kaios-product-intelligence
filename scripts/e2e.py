@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from kaios.config import ReportConfig
 from kaios.extractor import Extractor
 from kaios.analyzer import synthesize
-from kaios.reporter import write_reports
+from kaios.model_providers import FakeModelProvider
+from kaios.offline import OFFLINE_DEMO_SOURCE_TYPE, write_offline_demo_reports
 
 
 class _FakeResp:
@@ -43,46 +44,48 @@ def main():
     )
     extractor = Extractor(marketplace=cfg.marketplace, limit=5)
 
-    with patch("kaios.analyzer.litellm_completion") as mock_llm, \
-         patch("kaios.sources.base.httpx.Client", _FakeClient):
+    provider = FakeModelProvider(
+        output=[
+            {
+                "title": "Mock Eco Invite",
+                "evidence_urls": ["http://a.com"],
+                "price_range": "$15–$30",
+                "competitor_count_estimate": "~40 listings",
+                "demand_signal": "High",
+                "profitability_hint": "Good (low competition, high margin)",
+                "confidence": "High",
+                "recommended": True,
+            }
+        ]
+    )
 
-        class FakeMsg:
-            content = json.dumps([
-                {
-                    "title": "Mock Eco Invite",
-                    "evidence_urls": ["http://a.com"],
-                    "price_range": "$15–$30",
-                    "competitor_count_estimate": "~40 listings",
-                    "demand_signal": "High",
-                    "profitability_hint": "Good (low competition, high margin)",
-                    "confidence": "High",
-                    "recommended": True,
-                }
-            ])
-        class FakeChoice:
-            message = FakeMsg()
-        class FakeResp:
-            choices = [FakeChoice()]
-        mock_llm.return_value = FakeResp()
+    with patch("kaios.sources.base.httpx.Client", _FakeClient):
 
         snippets = extractor.gather(cfg.seed)
         assert snippets, "No snippets gathered"
 
-        opps = synthesize(snippets, cfg.seed, cfg.model)
+        opps = synthesize(snippets, cfg.seed, cfg.model, provider=provider)
         assert opps, "No opportunities synthesized"
 
-        md, js = write_reports(cfg.seed, opps, cfg)
+        md, js = write_offline_demo_reports(cfg.seed, opps, cfg)
         assert md.exists(), f"Missing markdown: {md}"
         assert js.exists(), f"Missing json: {js}"
 
         data = json.loads(js.read_text())
         assert data["count"] == 1
         assert data["opportunities"][0]["title"] == "Mock Eco Invite"
+        assert data["evidence_mode"] == OFFLINE_DEMO_SOURCE_TYPE
+        assert "not live marketplace research" in data["disclaimer"]
+        markdown = md.read_text()
+        assert OFFLINE_DEMO_SOURCE_TYPE in markdown
+        assert "not live marketplace research" in markdown
 
+        print(f"Evidence mode: {OFFLINE_DEMO_SOURCE_TYPE}")
+        print("This evidence is not live marketplace research.")
         print("E2E passed")
         print(f"MD: {md}")
         print(f"JSON: {js}")
-        print(md.read_text()[:500])
+        print(markdown[:500])
 
 
 if __name__ == "__main__":

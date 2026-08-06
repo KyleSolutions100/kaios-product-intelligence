@@ -2,3 +2,7 @@ marketplace: "etsy"
 default_search_limit: 12
 output_dir: "reports"
 confidence_threshold: "Medium"
+model_provider: "rules"
+agent_model_providers:
+  product_intelligence: "rules"
+model: "gpt-4o-mini"
