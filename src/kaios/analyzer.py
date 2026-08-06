@@ -1,10 +1,12 @@
-import json
-import os
 from difflib import SequenceMatcher
 from typing import List
 
-from litellm import completion as litellm_completion
-
+from .model_providers import (
+    ModelProvider,
+    ModelRequest,
+    RulesModelProvider,
+    create_model_provider,
+)
 from .models import Opportunity
 
 
@@ -25,30 +27,6 @@ Return ONLY a JSON array. Each item must have:
 Do not include markdown fences or commentary."""
 
 
-def _call_llm(snippets: List[dict], seed: str, model: str) -> str:
-    user_payload = json.dumps({"seed": seed, "evidence": snippets[:12]}, ensure_ascii=False)
-    response = litellm_completion(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_payload},
-        ],
-        api_key=os.getenv("KAIOS_LLM_API_KEY"),
-        api_base=os.getenv("KAIOS_LLM_API_BASE"),
-        temperature=0.2,
-        max_tokens=2000,
-    )
-    return response.choices[0].message.content.strip()
-
-
-def _clean_json(text: str) -> str:
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0]
-    elif "```" in text:
-        text = text.split("```")[1].split("```")[0]
-    return text.strip()
-
-
 def dedupe(opps: List[Opportunity]) -> List[Opportunity]:
     unique: List[Opportunity] = []
     for o in opps:
@@ -60,15 +38,31 @@ def dedupe(opps: List[Opportunity]) -> List[Opportunity]:
     return unique
 
 
-def synthesize(snippets: List[dict], seed: str, model: str) -> List[Opportunity]:
+def synthesize(
+    snippets: List[dict],
+    seed: str,
+    model: str | None = None,
+    *,
+    provider: ModelProvider | None = None,
+) -> List[Opportunity]:
+    """Synthesize opportunities with an injected structured model provider.
+
+    Passing the historical third positional ``model`` argument without a provider
+    selects the opt-in LiteLLM adapter. New calls without either use offline rules.
+    """
+
     if not snippets:
         return []
-    raw = _call_llm(snippets, seed, model)
-    cleaned = _clean_json(raw)
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return []
+    selected_provider = provider or _default_provider(model)
+    output = selected_provider.generate(
+        ModelRequest(
+            task="product_intelligence.synthesize",
+            system_prompt=SYSTEM_PROMPT,
+            input_data={"seed": seed, "evidence": snippets[:12]},
+            model=model,
+        )
+    )
+    data = output.data
     if not isinstance(data, list):
         return []
     opps: List[Opportunity] = []
@@ -78,3 +72,9 @@ def synthesize(snippets: List[dict], seed: str, model: str) -> List[Opportunity]
         except Exception:
             continue
     return dedupe(opps)
+
+
+def _default_provider(model: str | None) -> ModelProvider:
+    if model is not None:
+        return create_model_provider("litellm", model=model)
+    return RulesModelProvider()

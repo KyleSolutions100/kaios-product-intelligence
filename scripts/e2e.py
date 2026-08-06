@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from kaios.config import ReportConfig
 from kaios.extractor import Extractor
 from kaios.analyzer import synthesize
+from kaios.model_providers import FakeModelProvider
 from kaios.reporter import write_reports
 
 
@@ -43,32 +44,27 @@ def main():
     )
     extractor = Extractor(marketplace=cfg.marketplace, limit=5)
 
-    with patch("kaios.analyzer.litellm_completion") as mock_llm, \
-         patch("kaios.sources.base.httpx.Client", _FakeClient):
+    provider = FakeModelProvider(
+        output=[
+            {
+                "title": "Mock Eco Invite",
+                "evidence_urls": ["http://a.com"],
+                "price_range": "$15–$30",
+                "competitor_count_estimate": "~40 listings",
+                "demand_signal": "High",
+                "profitability_hint": "Good (low competition, high margin)",
+                "confidence": "High",
+                "recommended": True,
+            }
+        ]
+    )
 
-        class FakeMsg:
-            content = json.dumps([
-                {
-                    "title": "Mock Eco Invite",
-                    "evidence_urls": ["http://a.com"],
-                    "price_range": "$15–$30",
-                    "competitor_count_estimate": "~40 listings",
-                    "demand_signal": "High",
-                    "profitability_hint": "Good (low competition, high margin)",
-                    "confidence": "High",
-                    "recommended": True,
-                }
-            ])
-        class FakeChoice:
-            message = FakeMsg()
-        class FakeResp:
-            choices = [FakeChoice()]
-        mock_llm.return_value = FakeResp()
+    with patch("kaios.sources.base.httpx.Client", _FakeClient):
 
         snippets = extractor.gather(cfg.seed)
         assert snippets, "No snippets gathered"
 
-        opps = synthesize(snippets, cfg.seed, cfg.model)
+        opps = synthesize(snippets, cfg.seed, cfg.model, provider=provider)
         assert opps, "No opportunities synthesized"
 
         md, js = write_reports(cfg.seed, opps, cfg)

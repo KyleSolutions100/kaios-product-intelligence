@@ -8,6 +8,7 @@ from rich.panel import Panel
 from .config import load_config
 from .extractor import Extractor
 from .analyzer import synthesize
+from .model_providers import create_model_provider
 from .reporter import write_reports
 
 app = typer.Typer()
@@ -35,7 +36,10 @@ def research(
     if not snippets:
         console.print("[red]No evidence gathered. Check search connectivity.[/red]")
         raise typer.Exit(1)
-    opps = synthesize(snippets, seed, cfg.model)
+    provider = create_model_provider(
+        cfg.provider_for_agent("product_intelligence"), model=cfg.model
+    )
+    opps = synthesize(snippets, seed, cfg.model, provider=provider)
     if not opps:
         console.print("[red]No opportunities synthesized.[/red]")
         raise typer.Exit(1)
