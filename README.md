@@ -1,13 +1,13 @@
 # KAIOS — Product Intelligence and AI Business Operations
 
-KAIOS is a Phase 1, workspace-aware AI business operating system focused on
+KAIOS is a workspace-aware AI business operating system focused on
 Etsy and print-on-demand Product Intelligence. It accepts a human business
 request, routes structured work through a CEO Orchestrator and specialist
 agent, persists the audit trail, and returns recommendations for human review.
 
-Phase 1 is deliberately offline-first. It can demonstrate the complete agent
-workflow without an AI API key, paid model, live Etsy connection, or external
-business action.
+Phase 2 adds an official, read-only Etsy research source while preserving the
+offline Phase 1 demonstration. Analysis remains deterministic and free by
+default: live evidence is evaluated by `RulesModelProvider`, not a paid model.
 
 ## Phase 1 architecture
 
@@ -54,6 +54,19 @@ Phase 1 execution is **simulation only**:
 - the CEO Orchestrator cannot approve its own proposal;
 - approval can produce only a simulated execution audit event.
 
+## Evidence labels
+
+KAIOS keeps evidence origin explicit:
+
+- `LIVE` means a successful response from an allowlisted official marketplace
+  API.
+- `FALLBACK` is reserved for explicitly identified non-live evidence. KAIOS does
+  not silently substitute fallback evidence for a failed Etsy request.
+- `MOCK / OFFLINE DEMO` means deterministic development fixtures.
+
+Public favourites, reviews, and shop activity are popularity indicators. They
+are not presented as verified listing sales.
+
 ## Offline evidence warning
 
 The bundled demonstration uses deterministic fixture evidence labelled:
@@ -82,6 +95,48 @@ The editable installation provides the `kaios` command. The equivalent module
 form is `python -m kaios.main`.
 
 No `.env` file or AI API key is required for the offline workflow.
+
+## Official read-only Etsy research
+
+Live research uses only:
+
+```text
+GET https://openapi.etsy.com/v3/application/listings/active
+```
+
+KAIOS sends search keywords and a result limit, and requests public `Shop` and
+`Images` inclusions where Etsy makes them available. Image URLs are retained as
+references only; KAIOS does not download the images.
+
+Register an Etsy application and obtain access appropriate for public
+marketplace research. Put the keystring/shared-secret value in your local
+environment or ignored `.env` file:
+
+```bash
+export ETSY_API_KEY='YOUR_KEYSTRING:YOUR_SHARED_SECRET'
+```
+
+Never commit this value. The provider does not include it in tasks, results,
+reports, logs, or error messages.
+
+Run official live research through the unchanged CEO workflow:
+
+```bash
+kaios research "funny dog owner t-shirt" --marketplace etsy --limit 5
+```
+
+For a manual opt-in smoke test against temporary local output:
+
+```bash
+ETSY_API_KEY="$ETSY_API_KEY" kaios research "teacher tote bag" \
+  --database /tmp/kaios-live-smoke.db \
+  --output /tmp/kaios-live-smoke-reports
+```
+
+This command is never run by the automated test suite. If Etsy returns `403`,
+confirm that the application is approved for the official public listing-search
+endpoint and that its permitted use covers product-research analytics. KAIOS
+will not fall back to scraping, browser automation, or mock data labelled live.
 
 ## Offline demonstration
 
@@ -112,7 +167,7 @@ kaios demo --approval reject
 kaios workspace create my-business --name "My Business"
 kaios workspace list
 
-# Offline Product Intelligence request through the CEO
+# Official read-only Product Intelligence request through the CEO
 kaios research "funny dog owner t-shirt"
 kaios research "wedding invitation" --limit 5 --output reports
 kaios research "teacher tote bag" --config config.yaml.example
@@ -144,8 +199,9 @@ to use a database other than the default.
 - `agent_model_providers.product_intelligence: rules`
 
 The CLI options `--marketplace`, `--limit`, and `--output` override configured
-values. The Phase 1 CEO CLI rejects paid or network providers rather than
-silently ignoring them.
+values. The CEO CLI rejects paid model providers rather than silently ignoring
+them. The marketplace provider uses the network only for official read-only
+research; `RulesModelProvider` itself remains offline.
 
 ## Local data
 
@@ -180,7 +236,14 @@ kaios demo --approval approve \
 ## Current limitations
 
 - Demo evidence is deterministic fixture data, not live marketplace evidence.
-- Live Etsy validation and publishing are not implemented.
+- Live Etsy access requires an approved Etsy application and is subject to Etsy
+  endpoint permissions and rate limits.
+- Public fields differ by listing and application access. Missing prices, shop
+  details, reviews, tags, or images remain unavailable rather than fabricated.
+- Review counts may be shop-scoped. Favourites and shop transactions are
+  popularity context, not verified sales for a listing.
+- No page scraping or browser-automation fallback is implemented.
+- Publishing is not implemented.
 - Store Operations, Marketing, and Finance remain capability shells.
 - Human identity is represented by the local `human_owner` actor; authenticated
   user accounts are future work.

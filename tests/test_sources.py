@@ -1,43 +1,56 @@
-import os
-import sys
-from pathlib import Path
+from __future__ import annotations
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from datetime import datetime, timezone
 
-from kaios.sources.base import BaseSource, EtsyApiSource, WebSearchSource, EvidenceItem, build_sources
+import pytest
+
+from kaios.sources import (
+    EvidenceBatch,
+    EtsyProvider,
+    MarketplaceConfigurationError,
+    MarketplaceSearchResult,
+    UnsupportedMarketplaceError,
+    create_marketplace_provider,
+)
 
 
-def test_api_key_env_controls_etsy_source(monkeypatch):
-    monkeypatch.setenv("ETSY_API_KEY", "fake")
-    sources = build_sources("etsy", 12)
-    assert isinstance(sources[0], EtsyApiSource)
+def test_factory_creates_only_configured_official_etsy_provider(monkeypatch):
+    monkeypatch.setenv("ETSY_API_KEY", "test-key:test-secret")
+
+    provider = create_marketplace_provider(" Etsy ")
+
+    assert isinstance(provider, EtsyProvider)
+    assert provider.marketplace_id == "etsy"
+    assert provider.requires_network is True
 
 
-def test_missing_api_key_falls_back_to_web_search(monkeypatch):
+def test_factory_does_not_fall_back_when_key_is_missing(monkeypatch):
     monkeypatch.delenv("ETSY_API_KEY", raising=False)
-    sources = build_sources("etsy", 6)
-    assert sources
-    assert isinstance(sources[0], WebSearchSource)
+
+    with pytest.raises(MarketplaceConfigurationError, match="ETSY_API_KEY"):
+        create_marketplace_provider("etsy")
 
 
-def test_web_search_source_metadata():
-    source = WebSearchSource(marketplace="etsy", limit=3)
-    assert source.source_name == "Web Search"
-    assert source.source_type == "compliant_web_search"
-    assert source.source_url == "https://duckduckgo.com/"
+def test_factory_rejects_unsupported_marketplace_without_scraping(monkeypatch):
+    monkeypatch.setenv("ETSY_API_KEY", "test-key:test-secret")
+
+    with pytest.raises(UnsupportedMarketplaceError, match="no approved official"):
+        create_marketplace_provider("other-marketplace")
 
 
-def test_evidence_items_have_all_required_fields():
-    item = EvidenceItem(
-        title="Test Product",
-        url="http://example.com",
-        price="$10",
-        demand="High",
-        competition="40",
-        source_name="Web Search",
-        source_url="http://example.com",
-        source_type="compliant_web_search",
+def test_successful_empty_search_remains_distinguishable_from_failure():
+    result = MarketplaceSearchResult(
+        marketplace="etsy",
+        query="no matches",
+        evidence=[],
+        total_available=0,
+        retrieved_at=datetime.now(timezone.utc),
+        source_type="LIVE",
     )
-    d = item.to_dict()
-    for key in ["title", "url", "price", "demand_signal", "competitor_count_estimate", "source", "source_url", "source_type"]:
-        assert key in d
+
+    batch = EvidenceBatch(result)
+
+    assert batch == []
+    assert batch.retrieval_succeeded is True
+    assert batch.total_available == 0
+    assert batch.source_type == "LIVE"

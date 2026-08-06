@@ -102,7 +102,7 @@ class ProductIntelligenceAgent(BaseAgent):
                 limit=research_input.result_limit,
             )
             evidence = extractor.gather(research_input.seed)
-            if not evidence:
+            if not evidence and not getattr(evidence, "retrieval_succeeded", False):
                 raise ResearchFailure("no evidence was collected")
         except Exception as error:
             return self._failed_result(task, "evidence_collection", error)
@@ -172,6 +172,7 @@ class ProductIntelligenceAgent(BaseAgent):
                     "opportunity_count": opportunity_count,
                     "recommended_count": recommended_count,
                 },
+                "evidence_retrieval": _evidence_retrieval_metadata(evidence),
                 "reports": {
                     "markdown": str(markdown_path),
                     "json": str(json_path),
@@ -241,9 +242,43 @@ class ProductIntelligenceAgent(BaseAgent):
 
 
 def _evidence_references(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    reference_fields = ("title", "url", "source", "source_url", "source_type")
+    reference_fields = (
+        "marketplace",
+        "listing_id",
+        "title",
+        "url",
+        "price",
+        "shop_id",
+        "shop_name",
+        "review_count",
+        "review_scope",
+        "popularity_signals",
+        "image_references",
+        "tags",
+        "keywords",
+        "source",
+        "source_url",
+        "source_type",
+        "collected_at",
+        "search_result_count",
+        "metadata",
+    )
     return [
-        {field: item[field] for field in reference_fields if item.get(field)}
+        {field: item[field] for field in reference_fields if item.get(field) is not None}
         for item in evidence
         if isinstance(item, dict)
     ]
+
+
+def _evidence_retrieval_metadata(evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "succeeded": bool(getattr(evidence, "retrieval_succeeded", bool(evidence))),
+        "source_type": getattr(evidence, "source_type", None),
+        "marketplace": getattr(evidence, "marketplace", None),
+        "total_available": getattr(evidence, "total_available", None),
+        "retrieved_at": (
+            value.isoformat()
+            if (value := getattr(evidence, "retrieved_at", None)) is not None
+            else None
+        ),
+    }

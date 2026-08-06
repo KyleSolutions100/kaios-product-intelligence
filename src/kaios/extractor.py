@@ -1,17 +1,27 @@
-from typing import List, Dict, Any
+"""Marketplace evidence extraction through approved official providers."""
 
-from .sources import build_sources
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from .sources import EvidenceBatch, MarketplaceProvider, create_marketplace_provider
+
+
+ProviderFactory = Callable[[str], MarketplaceProvider]
 
 
 class Extractor:
-    def __init__(self, marketplace: str, limit: int = 12):
+    def __init__(
+        self,
+        marketplace: str,
+        limit: int = 12,
+        *,
+        provider_factory: ProviderFactory = create_marketplace_provider,
+    ) -> None:
         self.marketplace = marketplace
         self.limit = limit
+        self._provider_factory = provider_factory
 
-    def gather(self, seed: str) -> List[Dict[str, Any]]:
-        sources = build_sources(self.marketplace, self.limit)
-        snippets: List[Dict[str, Any]] = []
-        for source in sources:
-            for item in source.search(seed, self.limit):
-                snippets.append(item.to_dict())
-        return snippets
+    def gather(self, seed: str) -> EvidenceBatch:
+        provider = self._provider_factory(self.marketplace)
+        return EvidenceBatch(provider.search(seed, self.limit))
