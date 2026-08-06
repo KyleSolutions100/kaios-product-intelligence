@@ -170,3 +170,48 @@ def test_agent_validates_assignment_task_type_and_running_state(tmp_path):
         agent.handle(task.model_copy(update={"task_type": "publish_listing"}))
     with pytest.raises(AgentTaskValidationError, match="must be running"):
         agent.handle(task.model_copy(update={"status": TaskStatus.CREATED}))
+
+
+def test_agent_preserves_live_evidence_provenance_and_image_references(tmp_path):
+    live_evidence = [
+        {
+            **EVIDENCE[0],
+            "marketplace": "etsy",
+            "listing_id": "123",
+            "price": {"amount": "18.99", "currency": "GBP", "display": "18.99 GBP"},
+            "shop_id": "456",
+            "shop_name": "Public Shop",
+            "review_count": 25,
+            "review_scope": "SHOP",
+            "popularity_signals": [
+                {
+                    "name": "listing_favorites",
+                    "value": 4,
+                    "scope": "LISTING",
+                    "description": "Popularity signal; not verified sales.",
+                }
+            ],
+            "image_references": [
+                {"url": "https://i.etsystatic.com/reference-only.jpg"}
+            ],
+            "tags": ["dog shirt"],
+            "keywords": ["dog shirt"],
+            "collected_at": "2026-08-06T10:30:00Z",
+            "search_result_count": 12,
+            "metadata": {"popularity_disclaimer": "not verified sales"},
+            "source_type": "LIVE",
+        }
+    ]
+    agent = ProductIntelligenceAgent(
+        extractor_factory=extractor_factory(live_evidence)
+    )
+
+    result = agent.handle(running_task(tmp_path))
+
+    assert result.status is ResultStatus.SUCCEEDED
+    assert result.evidence[0]["listing_id"] == "123"
+    assert result.evidence[0]["review_scope"] == "SHOP"
+    assert result.evidence[0]["popularity_signals"][0]["scope"] == "LISTING"
+    assert result.evidence[0]["image_references"] == [
+        {"url": "https://i.etsystatic.com/reference-only.jpg"}
+    ]

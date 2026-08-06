@@ -1,7 +1,8 @@
-"""Composition root for the safe, offline-first Phase 1 KAIOS runtime."""
+"""Composition roots for KAIOS offline demo and live read-only research."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,9 +28,13 @@ from kaios.offline import OfflineDemoExtractor, write_offline_demo_reports
 from kaios.orchestration import CEOOrchestrator, CEORequest, CEOResponse
 from kaios.repositories import DEFAULT_DATABASE_PATH, RecordNotFoundError
 from kaios.repositories.sqlite import SQLiteRepositories
+from kaios.extractor import Extractor
+from kaios.reporter import write_reports
+from kaios.sources import validate_marketplace_configuration
 
 
 DEMO_APPROVAL_TASK_TYPE = "demo_simulated_publish"
+LIVE_EVIDENCE_SOURCE_TYPE = "LIVE"
 
 
 @dataclass(frozen=True)
@@ -253,3 +258,60 @@ def build_runtime(
         orchestrator=orchestrator,
         approvals=approvals,
     )
+
+
+def build_live_research_runtime(
+    database_path: str | Path = DEFAULT_DATABASE_PATH,
+    *,
+    marketplace: str = "etsy",
+    default_report_output_location: str = "reports",
+) -> KAIOSRuntime:
+    """Build the official read-only research runtime after configuration checks."""
+
+    validate_marketplace_configuration(marketplace)
+    repositories = SQLiteRepositories(database_path)
+    product_agent = ProductIntelligenceAgent(
+        provider=RulesModelProvider(),
+        extractor_factory=Extractor,
+        report_writer=write_live_research_reports,
+        default_report_output_location=default_report_output_location,
+    )
+    registry = build_initial_agent_registry(product_agent)
+    task_service = AgentTaskService(registry, repositories)
+    orchestrator = CEOOrchestrator(
+        registry, repositories, task_service=task_service
+    )
+    approvals = ActionApprovalService(repositories)
+    return KAIOSRuntime(
+        repositories=repositories,
+        task_service=task_service,
+        orchestrator=orchestrator,
+        approvals=approvals,
+    )
+
+
+def write_live_research_reports(seed, opportunities, config):
+    """Label reports produced only after successful official API retrieval."""
+
+    markdown_path, json_path = write_reports(seed, opportunities, config)
+    disclaimer = (
+        "> **Evidence mode: LIVE — official read-only marketplace API.** "
+        "Popularity indicators are public signals, not verified sales.\n\n"
+    )
+    markdown_path.write_text(
+        disclaimer + markdown_path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    report_data = json.loads(json_path.read_text(encoding="utf-8"))
+    report_data.update(
+        {
+            "evidence_mode": LIVE_EVIDENCE_SOURCE_TYPE,
+            "disclaimer": (
+                "Official read-only public marketplace evidence; popularity "
+                "indicators are signals, not verified sales."
+            ),
+        }
+    )
+    json_path.write_text(
+        json.dumps(report_data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return markdown_path, json_path

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import re
 
+import httpx
 from typer.testing import CliRunner
 
 from kaios.main import app
 from kaios.repositories.sqlite import SQLiteRepositories
+from kaios.sources import EtsyProvider
 
 
 runner = CliRunner()
@@ -13,6 +15,37 @@ runner = CliRunner()
 
 def invoke(database_path, *arguments):
     return runner.invoke(app, [*arguments, "--database", str(database_path)])
+
+
+def patch_live_etsy(monkeypatch, *, results=None, status=200):
+    if results is None:
+        results = [
+            {
+                "listing_id": 700,
+                "title": "Public Live Test Listing",
+                "url": "https://www.etsy.com/listing/700/public-live-test",
+                "price": {"amount": 1500, "divisor": 100, "currency_code": "GBP"},
+                "num_favorers": 7,
+                "shop": {"shop_id": 8, "shop_name": "PublicTestShop", "review_count": 9},
+                "images": [{"url_fullxfull": "https://i.etsystatic.com/public-test.jpg"}],
+                "tags": ["public test"],
+            }
+        ]
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(status, json={"count": len(results), "results": results})
+
+    provider = EtsyProvider(
+        "test-key:test-secret",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        max_retries=0,
+        sleep=lambda seconds: None,
+    )
+    monkeypatch.setenv("ETSY_API_KEY", "test-key:test-secret")
+    monkeypatch.setattr("kaios.sources.factory.EtsyProvider", lambda api_key: provider)
+    return calls
 
 
 def test_demo_runs_without_api_keys_and_labels_mock_evidence(monkeypatch, tmp_path):
@@ -213,17 +246,13 @@ def test_invalid_demo_choice_has_no_workflow_or_report_side_effects(tmp_path):
 
 
 def test_research_config_applies_supported_offline_settings(monkeypatch, tmp_path):
-    def forbidden_network(*args, **kwargs):
-        raise AssertionError("network access was attempted")
-
-    monkeypatch.delenv("ETSY_API_KEY", raising=False)
-    monkeypatch.setattr("httpx.Client", forbidden_network)
+    calls = patch_live_etsy(monkeypatch)
     database_path = tmp_path / "kaios.db"
     report_path = tmp_path / "configured-reports"
     config_path = tmp_path / "research.yaml"
     config_path.write_text(
         f"""
-marketplace: configured-marketplace
+marketplace: etsy
 default_search_limit: 2
 output_dir: {report_path}
 model_provider: rules
@@ -242,6 +271,8 @@ agent_model_providers:
     )
 
     assert result.exit_code == 0, result.output
+    assert "[LIVE]" in result.output
+    assert len(calls) == 1
     assert "Model provider: rules" in result.output
     repositories = SQLiteRepositories(database_path)
     specialist = next(
@@ -249,13 +280,14 @@ agent_model_providers:
         for task in repositories.tasks.list("print-on-demand")
         if task.task_type == "product_research"
     )
-    assert specialist.input_data["marketplace"] == "configured-marketplace"
+    assert specialist.input_data["marketplace"] == "etsy"
     assert specialist.input_data["result_limit"] == 2
     assert specialist.input_data["report_output_location"] == str(report_path)
     assert (report_path / "latest.json").exists()
 
 
-def test_research_config_cli_options_override_file_values(tmp_path):
+def test_research_config_cli_options_override_file_values(monkeypatch, tmp_path):
+    patch_live_etsy(monkeypatch)
     database_path = tmp_path / "kaios.db"
     config_path = tmp_path / "research.yaml"
     config_path.write_text(
@@ -276,7 +308,7 @@ model_provider: rules
         "--config",
         str(config_path),
         "--marketplace",
-        "override-marketplace",
+        "etsy",
         "--limit",
         "1",
         "--output",
@@ -290,7 +322,7 @@ model_provider: rules
         for task in repositories.tasks.list("print-on-demand")
         if task.task_type == "product_research"
     )
-    assert specialist.input_data["marketplace"] == "override-marketplace"
+    assert specialist.input_data["marketplace"] == "etsy"
     assert specialist.input_data["result_limit"] == 1
     assert specialist.input_data["report_output_location"] == str(override_reports)
 
@@ -328,3 +360,42 @@ def test_invalid_research_config_fails_before_database_creation(tmp_path):
     assert result.exit_code == 1
     assert "invalid YAML configuration" in result.output
     assert not database_path.exists()
+
+
+def test_live_research_missing_key_fails_before_database_or_network(
+    monkeypatch, tmp_path
+):
+    monkeypatch.delenv("ETSY_API_KEY", raising=False)
+    network_calls = []
+
+    def forbidden_network(*args, **kwargs):
+        network_calls.append((args, kwargs))
+        raise AssertionError("network should not be reached")
+
+    monkeypatch.setattr("httpx.Client", forbidden_network)
+    database_path = tmp_path / "kaios.db"
+
+    result = invoke(database_path, "research", "dog owner shirt")
+
+    assert result.exit_code == 1
+    assert "ETSY_API_KEY is required" in result.output
+    assert "test-secret" not in result.output
+    assert network_calls == []
+    assert not database_path.exists()
+
+
+def test_live_research_source_failure_returns_nonzero_with_audit_trail(
+    monkeypatch, tmp_path
+):
+    patch_live_etsy(monkeypatch, status=403)
+    database_path = tmp_path / "kaios.db"
+
+    result = invoke(database_path, "research", "dog owner shirt")
+
+    assert result.exit_code == 1
+    assert "MarketplaceAuthenticationError" in result.output
+    repositories = SQLiteRepositories(database_path)
+    tasks = repositories.tasks.list("print-on-demand")
+    assert len(tasks) == 2
+    assert {task.status.value for task in tasks} == {"failed"}
+    assert repositories.decisions.list("print-on-demand") == []

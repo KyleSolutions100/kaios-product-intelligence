@@ -1,4 +1,4 @@
-"""Command-line interface for the offline-first Phase 1 KAIOS workflow."""
+"""Command-line interface for offline demos and read-only live research."""
 
 from __future__ import annotations
 
@@ -23,10 +23,15 @@ from kaios.repositories import (
     RepositoryError,
 )
 from kaios.runtime import DemoOutcome, KAIOSRuntime, build_runtime
+from kaios.runtime import build_live_research_runtime
+from kaios.sources import MarketplaceSourceError, validate_marketplace_configuration
 
 
 app = typer.Typer(
-    help="KAIOS Phase 1 — workspace-safe, offline AI business operations.",
+    help=(
+        "KAIOS — workspace-safe AI business operations with an offline demo "
+        "and official read-only research."
+    ),
     no_args_is_help=True,
 )
 workspace_app = typer.Typer(help="Create and inspect business workspaces.")
@@ -50,6 +55,7 @@ CLI_ERRORS = (
     sqlite3.Error,
     OSError,
     ValueError,
+    MarketplaceSourceError,
 )
 
 
@@ -69,6 +75,12 @@ def guarded(command: CommandFunction) -> CommandFunction:
 
 def _runtime(database: Path) -> KAIOSRuntime:
     runtime = build_runtime(database)
+    runtime.ensure_default_workspace()
+    return runtime
+
+
+def _live_research_runtime(database: Path, marketplace: str) -> KAIOSRuntime:
+    runtime = build_live_research_runtime(database, marketplace=marketplace)
     runtime.ensure_default_workspace()
     return runtime
 
@@ -121,23 +133,27 @@ def research(
         provider = loaded.provider_for_agent("product_intelligence")
         if provider != "rules":
             raise ValueError(
-                "the offline CEO research command supports only the rules model "
+                "the CEO research command supports only the default rules model "
                 f"provider, not {provider}"
             )
         configured_marketplace = loaded.marketplace
         configured_limit = loaded.search_limit
         configured_output = loaded.output_dir
-    runtime = _runtime(database)
+    selected_marketplace = marketplace or configured_marketplace
+    validate_marketplace_configuration(selected_marketplace)
+    runtime = _live_research_runtime(database, selected_marketplace)
     response = runtime.submit_product_research(
         workspace_id=workspace,
         seed=seed,
-        marketplace=marketplace or configured_marketplace,
+        marketplace=selected_marketplace,
         result_limit=limit if limit is not None else configured_limit,
         report_output_location=(
             str(output) if output is not None else configured_output
         ),
     )
     _display_briefing(runtime, response)
+    if response.error:
+        raise typer.Exit(code=1)
 
 
 @task_app.command("list")
@@ -363,6 +379,8 @@ def _display_briefing(runtime: KAIOSRuntime, response: CEOResponse) -> None:
     typer.echo(f"Parent CEO task: {parent.task_id} | {parent.status.value}")
     typer.echo(f"Child specialist task: {child.task_id} | {child.status.value}")
     typer.echo(f"Summary: {response.summary}")
+    if response.error:
+        typer.echo(f"Error: {response.error}", err=True)
     typer.echo(f"Decision recorded: {response.decision_id or 'none'}")
     if specialist is not None:
         _display_result(specialist)

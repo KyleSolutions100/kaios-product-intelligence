@@ -1,40 +1,17 @@
 from pathlib import Path
-from unittest.mock import patch
 import json
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from kaios.config import ReportConfig
-from kaios.extractor import Extractor
 from kaios.analyzer import synthesize
 from kaios.model_providers import FakeModelProvider
-from kaios.offline import OFFLINE_DEMO_SOURCE_TYPE, write_offline_demo_reports
-
-
-class _FakeResp:
-    def __init__(self, text):
-        self.text = text
-
-    def raise_for_status(self):
-        return None
-
-
-class _FakeClient:
-    def __init__(self, *args, **kwargs):
-        self._calls = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
-    def get(self, url, *args, **kwargs):
-        self._calls.append(("get", url))
-        if "q=" in str(url):
-            return _FakeResp('<a href="http://a.com">A</a><a href="http://b.com">B</a>')
-        return _FakeResp("<html><head><title>A</title></head><body>Mock product content</body></html>")
+from kaios.offline import (
+    OFFLINE_DEMO_SOURCE_TYPE,
+    OfflineDemoExtractor,
+    write_offline_demo_reports,
+)
 
 
 def main():
@@ -42,7 +19,7 @@ def main():
     cfg = ReportConfig(
         marketplace="etsy", seed="eco-friendly wedding invitations", output_dir=str(out)
     )
-    extractor = Extractor(marketplace=cfg.marketplace, limit=5)
+    extractor = OfflineDemoExtractor(marketplace=cfg.marketplace, limit=5)
 
     provider = FakeModelProvider(
         output=[
@@ -59,33 +36,34 @@ def main():
         ]
     )
 
-    with patch("kaios.sources.base.httpx.Client", _FakeClient):
+    snippets = extractor.gather(cfg.seed)
+    assert snippets, "No snippets gathered"
+    assert all(
+        item["source_type"] == OFFLINE_DEMO_SOURCE_TYPE for item in snippets
+    )
 
-        snippets = extractor.gather(cfg.seed)
-        assert snippets, "No snippets gathered"
+    opps = synthesize(snippets, cfg.seed, cfg.model, provider=provider)
+    assert opps, "No opportunities synthesized"
 
-        opps = synthesize(snippets, cfg.seed, cfg.model, provider=provider)
-        assert opps, "No opportunities synthesized"
+    md, js = write_offline_demo_reports(cfg.seed, opps, cfg)
+    assert md.exists(), f"Missing markdown: {md}"
+    assert js.exists(), f"Missing json: {js}"
 
-        md, js = write_offline_demo_reports(cfg.seed, opps, cfg)
-        assert md.exists(), f"Missing markdown: {md}"
-        assert js.exists(), f"Missing json: {js}"
+    data = json.loads(js.read_text())
+    assert data["count"] == 1
+    assert data["opportunities"][0]["title"] == "Mock Eco Invite"
+    assert data["evidence_mode"] == OFFLINE_DEMO_SOURCE_TYPE
+    assert "not live marketplace research" in data["disclaimer"]
+    markdown = md.read_text()
+    assert OFFLINE_DEMO_SOURCE_TYPE in markdown
+    assert "not live marketplace research" in markdown
 
-        data = json.loads(js.read_text())
-        assert data["count"] == 1
-        assert data["opportunities"][0]["title"] == "Mock Eco Invite"
-        assert data["evidence_mode"] == OFFLINE_DEMO_SOURCE_TYPE
-        assert "not live marketplace research" in data["disclaimer"]
-        markdown = md.read_text()
-        assert OFFLINE_DEMO_SOURCE_TYPE in markdown
-        assert "not live marketplace research" in markdown
-
-        print(f"Evidence mode: {OFFLINE_DEMO_SOURCE_TYPE}")
-        print("This evidence is not live marketplace research.")
-        print("E2E passed")
-        print(f"MD: {md}")
-        print(f"JSON: {js}")
-        print(markdown[:500])
+    print(f"Evidence mode: {OFFLINE_DEMO_SOURCE_TYPE}")
+    print("This evidence is not live marketplace research.")
+    print("E2E passed")
+    print(f"MD: {md}")
+    print(f"JSON: {js}")
+    print(markdown[:500])
 
 
 if __name__ == "__main__":
