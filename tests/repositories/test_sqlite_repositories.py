@@ -95,7 +95,9 @@ def test_schema_version_metadata_foreign_keys_and_indexes(database_path):
         }
 
     assert version == CURRENT_SCHEMA_VERSION
-    assert [row["version"] for row in migrations] == [CURRENT_SCHEMA_VERSION]
+    assert [row["version"] for row in migrations] == list(
+        range(1, CURRENT_SCHEMA_VERSION + 1)
+    )
     assert datetime.fromisoformat(migrations[0]["applied_at"]).tzinfo is not None
     assert foreign_keys == 1
     assert {
@@ -104,6 +106,8 @@ def test_schema_version_metadata_foreign_keys_and_indexes(database_path):
         "idx_approvals_status",
         "idx_decisions_created",
         "idx_events_task",
+        "idx_proposals_task",
+        "idx_proposals_action",
     } <= indexes
 
 

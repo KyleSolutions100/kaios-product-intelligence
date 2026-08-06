@@ -1,6 +1,7 @@
 """Persistence-neutral repository interfaces and temporary implementations."""
 
 from .interfaces import (
+    ActionProposalRepository,
     ApprovalRepository,
     DecisionRepository,
     DuplicateRecordError,
@@ -15,6 +16,7 @@ from .interfaces import (
 from .memory import (
     InMemoryRepositories,
     MemoryApprovalRepository,
+    MemoryActionProposalRepository,
     MemoryDecisionRepository,
     MemoryEventRepository,
     MemoryResultRepository,
@@ -25,6 +27,7 @@ from .sqlite import (
     CURRENT_SCHEMA_VERSION,
     DEFAULT_DATABASE_PATH,
     SQLiteApprovalRepository,
+    SQLiteActionProposalRepository,
     SQLiteDatabase,
     SQLiteDecisionRepository,
     SQLiteEventRepository,
@@ -35,6 +38,7 @@ from .sqlite import (
 )
 
 __all__ = [
+    "ActionProposalRepository",
     "ApprovalRepository",
     "CURRENT_SCHEMA_VERSION",
     "DEFAULT_DATABASE_PATH",
@@ -44,6 +48,7 @@ __all__ = [
     "ImmutableRecordError",
     "InMemoryRepositories",
     "MemoryApprovalRepository",
+    "MemoryActionProposalRepository",
     "MemoryDecisionRepository",
     "MemoryEventRepository",
     "MemoryResultRepository",
@@ -53,6 +58,7 @@ __all__ = [
     "RepositoryError",
     "ResultRepository",
     "SQLiteApprovalRepository",
+    "SQLiteActionProposalRepository",
     "SQLiteDatabase",
     "SQLiteDecisionRepository",
     "SQLiteEventRepository",

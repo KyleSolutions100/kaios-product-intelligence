@@ -25,11 +25,13 @@ from kaios.core.workspaces import (
     validate_approval_for_proposal,
     validate_decision_context,
     validate_event_for_task,
+    validate_proposal_for_task,
     validate_result_for_task,
     validate_task_relationship,
 )
 
 from .interfaces import (
+    ActionProposalRepository,
     ApprovalRepository,
     DecisionRepository,
     DuplicateRecordError,
@@ -184,6 +186,50 @@ class MemoryResultRepository(ResultRepository):
         return [_copy(record) for record in sorted(records, key=_result_sort_key)]
 
 
+class MemoryActionProposalRepository(ActionProposalRepository):
+    def __init__(self, tasks: TaskRepository) -> None:
+        self._tasks = tasks
+        self._records: dict[tuple[str, str], ActionProposal] = {}
+
+    def add(self, proposal: ActionProposal) -> ActionProposal:
+        task = self._tasks.get(proposal.workspace_id, proposal.task_id)
+        if task is None:
+            raise RecordNotFoundError(
+                "proposal task not found in the proposal's workspace: "
+                f"{proposal.task_id}"
+            )
+        validate_proposal_for_task(task, proposal)
+        if proposal.proposed_by_agent != task.assigned_agent:
+            raise RelationshipValidationError(
+                "proposal.proposed_by_agent must match the task's assigned_agent"
+            )
+        key = _scoped_key(proposal.workspace_id, proposal.proposal_id)
+        if key in self._records:
+            raise DuplicateRecordError(
+                f"proposal already exists in workspace {proposal.workspace_id}: "
+                f"{proposal.proposal_id}"
+            )
+        self._records[key] = _copy(proposal)
+        return _copy(proposal)
+
+    def get(self, workspace_id: str, proposal_id: str) -> ActionProposal | None:
+        record = self._records.get(_scoped_key(workspace_id, proposal_id))
+        return _copy(record) if record is not None else None
+
+    def list(
+        self, workspace_id: str, *, task_id: str | None = None
+    ) -> list[ActionProposal]:
+        if not workspace_id:
+            raise ValueError("workspace_id is required")
+        records = [
+            record
+            for (record_workspace_id, _), record in self._records.items()
+            if record_workspace_id == workspace_id
+            and (task_id is None or record.task_id == task_id)
+        ]
+        return [_copy(record) for record in sorted(records, key=_proposal_sort_key)]
+
+
 class MemoryApprovalRepository(ApprovalRepository):
     def __init__(self, tasks: TaskRepository) -> None:
         self._tasks = tasks
@@ -237,7 +283,13 @@ class MemoryApprovalRepository(ApprovalRepository):
                 f"approval not found in workspace {approval.workspace_id}: "
                 f"{approval.approval_id}"
             )
-        identity_fields = ("workspace_id", "task_id", "proposal_id", "payload_hash")
+        identity_fields = (
+            "workspace_id",
+            "task_id",
+            "proposal_id",
+            "payload_hash",
+            "requested_at",
+        )
         if any(
             getattr(current, field) != getattr(approval, field)
             for field in identity_fields
@@ -351,6 +403,7 @@ class InMemoryRepositories:
         self.workspaces = MemoryWorkspaceRepository()
         self.tasks = MemoryTaskRepository(self.workspaces)
         self.results = MemoryResultRepository(self.tasks)
+        self.proposals = MemoryActionProposalRepository(self.tasks)
         self.approvals = MemoryApprovalRepository(self.tasks)
         self.decisions = MemoryDecisionRepository(
             self.workspaces, self.tasks, self.approvals
@@ -365,6 +418,7 @@ class InMemoryRepositories:
             self.workspaces,
             self.tasks,
             self.results,
+            self.proposals,
             self.approvals,
             self.decisions,
             self.events,
@@ -388,6 +442,10 @@ def _result_sort_key(result: AgentResult) -> tuple:
 
 def _approval_sort_key(approval: ApprovalRequest) -> tuple:
     return approval.requested_at, approval.approval_id
+
+
+def _proposal_sort_key(proposal: ActionProposal) -> tuple:
+    return proposal.created_at, proposal.proposal_id
 
 
 def _decision_sort_key(decision: DecisionRecord) -> tuple:

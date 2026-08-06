@@ -29,11 +29,13 @@ from kaios.core.workspaces import (
     validate_approval_for_proposal,
     validate_decision_context,
     validate_event_for_task,
+    validate_proposal_for_task,
     validate_result_for_task,
     validate_task_relationship,
 )
 
 from .interfaces import (
+    ActionProposalRepository,
     ApprovalRepository,
     DecisionRepository,
     DuplicateRecordError,
@@ -47,7 +49,7 @@ from .interfaces import (
 
 
 DEFAULT_DATABASE_PATH = Path("data/kaios.db")
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 ModelRecord = TypeVar("ModelRecord", bound=BaseModel)
 
@@ -150,7 +152,7 @@ class SQLiteDatabase:
 
 
 def _apply_migration(connection: sqlite3.Connection, version: int) -> None:
-    migrations = {1: _SCHEMA_VERSION_1}
+    migrations = {1: _SCHEMA_VERSION_1, 2: _SCHEMA_VERSION_2}
     statements = migrations.get(version)
     if statements is None:
         raise RuntimeError(f"missing SQLite migration for schema version {version}")
@@ -254,6 +256,26 @@ _SCHEMA_VERSION_1 = (
     "CREATE INDEX idx_decisions_task ON decisions(workspace_id, related_task_id)",
     "CREATE INDEX idx_decisions_approval ON decisions(workspace_id, related_approval_id)",
     "CREATE INDEX idx_events_task ON task_events(workspace_id, task_id, occurred_at, event_id)",
+)
+
+_SCHEMA_VERSION_2 = (
+    """
+    CREATE TABLE action_proposals (
+        workspace_id TEXT NOT NULL,
+        proposal_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        proposed_by_agent TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, proposal_id),
+        FOREIGN KEY (workspace_id, task_id)
+            REFERENCES tasks(workspace_id, task_id)
+    )
+    """,
+    "CREATE INDEX idx_proposals_task ON action_proposals(workspace_id, task_id, created_at, proposal_id)",
+    "CREATE INDEX idx_proposals_action ON action_proposals(workspace_id, action_type, created_at)",
 )
 
 
@@ -506,6 +528,80 @@ class SQLiteResultRepository(ResultRepository):
         return [_reconstruct(AgentResult, row["payload_json"]) for row in rows]
 
 
+class SQLiteActionProposalRepository(ActionProposalRepository):
+    def __init__(self, database: SQLiteDatabase, tasks: TaskRepository) -> None:
+        self._database = database
+        self._tasks = tasks
+
+    def add(self, proposal: ActionProposal) -> ActionProposal:
+        task = self._tasks.get(proposal.workspace_id, proposal.task_id)
+        if task is None:
+            raise RecordNotFoundError(
+                "proposal task not found in the proposal's workspace: "
+                f"{proposal.task_id}"
+            )
+        validate_proposal_for_task(task, proposal)
+        if proposal.proposed_by_agent != task.assigned_agent:
+            raise RelationshipValidationError(
+                "proposal.proposed_by_agent must match the task's assigned_agent"
+            )
+        try:
+            with self._database.transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO action_proposals(
+                        workspace_id, proposal_id, task_id, proposed_by_agent,
+                        action_type, payload_hash, created_at, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        proposal.workspace_id,
+                        proposal.proposal_id,
+                        proposal.task_id,
+                        proposal.proposed_by_agent,
+                        proposal.action_type,
+                        proposal.approval_payload_hash(),
+                        _timestamp(proposal.created_at),
+                        _serialize(proposal),
+                    ),
+                )
+        except sqlite3.IntegrityError as error:
+            _duplicate(
+                "proposal already exists in workspace "
+                f"{proposal.workspace_id}: {proposal.proposal_id}",
+                error,
+            )
+        return _reconstruct(ActionProposal, _serialize(proposal))
+
+    def get(self, workspace_id: str, proposal_id: str) -> ActionProposal | None:
+        _require_id(workspace_id, "workspace_id")
+        _require_id(proposal_id, "proposal ID")
+        with self._database.read() as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json FROM action_proposals
+                WHERE workspace_id = ? AND proposal_id = ?
+                """,
+                (workspace_id, proposal_id),
+            ).fetchone()
+        return _reconstruct(ActionProposal, row["payload_json"]) if row else None
+
+    def list(
+        self, workspace_id: str, *, task_id: str | None = None
+    ) -> list[ActionProposal]:
+        _require_id(workspace_id, "workspace_id")
+        query = "SELECT payload_json FROM action_proposals WHERE workspace_id = ?"
+        values: list[str] = [workspace_id]
+        if task_id is not None:
+            _require_id(task_id, "task ID")
+            query += " AND task_id = ?"
+            values.append(task_id)
+        query += " ORDER BY created_at, proposal_id"
+        with self._database.read() as connection:
+            rows = connection.execute(query, values).fetchall()
+        return [_reconstruct(ActionProposal, row["payload_json"]) for row in rows]
+
+
 class SQLiteApprovalRepository(ApprovalRepository):
     def __init__(self, database: SQLiteDatabase, tasks: TaskRepository) -> None:
         self._database = database
@@ -602,6 +698,7 @@ class SQLiteApprovalRepository(ApprovalRepository):
                 "task_id",
                 "proposal_id",
                 "payload_hash",
+                "requested_at",
             )
             if any(
                 getattr(current, field) != getattr(approval, field)
@@ -792,6 +889,7 @@ class SQLiteRepositories:
         self.workspaces = SQLiteWorkspaceRepository(self.database)
         self.tasks = SQLiteTaskRepository(self.database, self.workspaces)
         self.results = SQLiteResultRepository(self.database, self.tasks)
+        self.proposals = SQLiteActionProposalRepository(self.database, self.tasks)
         self.approvals = SQLiteApprovalRepository(self.database, self.tasks)
         self.decisions = SQLiteDecisionRepository(
             self.database, self.workspaces, self.tasks, self.approvals

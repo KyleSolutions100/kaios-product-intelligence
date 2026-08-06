@@ -85,6 +85,22 @@ class ResultRepository(ABC):
         """Return results for one workspace-scoped task."""
 
 
+class ActionProposalRepository(ABC):
+    @abstractmethod
+    def add(self, proposal: ActionProposal) -> ActionProposal:
+        """Store an immutable proposal after validating its task relationship."""
+
+    @abstractmethod
+    def get(self, workspace_id: str, proposal_id: str) -> ActionProposal | None:
+        """Return a proposal only from the requested workspace."""
+
+    @abstractmethod
+    def list(
+        self, workspace_id: str, *, task_id: str | None = None
+    ) -> list[ActionProposal]:
+        """Return proposals from one workspace, optionally for one task."""
+
+
 class ApprovalRepository(ABC):
     @abstractmethod
     def add(
