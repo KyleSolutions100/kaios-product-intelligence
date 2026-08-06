@@ -21,9 +21,23 @@ from .memory import (
     MemoryTaskRepository,
     MemoryWorkspaceRepository,
 )
+from .sqlite import (
+    CURRENT_SCHEMA_VERSION,
+    DEFAULT_DATABASE_PATH,
+    SQLiteApprovalRepository,
+    SQLiteDatabase,
+    SQLiteDecisionRepository,
+    SQLiteEventRepository,
+    SQLiteRepositories,
+    SQLiteResultRepository,
+    SQLiteTaskRepository,
+    SQLiteWorkspaceRepository,
+)
 
 __all__ = [
     "ApprovalRepository",
+    "CURRENT_SCHEMA_VERSION",
+    "DEFAULT_DATABASE_PATH",
     "DecisionRepository",
     "DuplicateRecordError",
     "EventRepository",
@@ -38,6 +52,14 @@ __all__ = [
     "RecordNotFoundError",
     "RepositoryError",
     "ResultRepository",
+    "SQLiteApprovalRepository",
+    "SQLiteDatabase",
+    "SQLiteDecisionRepository",
+    "SQLiteEventRepository",
+    "SQLiteRepositories",
+    "SQLiteResultRepository",
+    "SQLiteTaskRepository",
+    "SQLiteWorkspaceRepository",
     "TaskRepository",
     "WorkspaceRepository",
 ]

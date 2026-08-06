@@ -28,6 +28,12 @@ htmlcov/
 # KAIOS-generated reports
 reports/
 
+# Local SQLite runtime databases
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+
 # Local editor and operating-system files
 .DS_Store
 *.log
