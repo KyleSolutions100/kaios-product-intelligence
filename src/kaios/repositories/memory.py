@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TypeVar
+from contextlib import contextmanager
+from copy import deepcopy
+from typing import Iterator, TypeVar
 
 from pydantic import BaseModel
 
@@ -354,6 +356,26 @@ class InMemoryRepositories:
             self.workspaces, self.tasks, self.approvals
         )
         self.events = MemoryEventRepository(self.tasks)
+
+    @contextmanager
+    def transaction(self) -> Iterator[InMemoryRepositories]:
+        """Roll back all in-memory repositories if a coordinated write fails."""
+
+        repositories = (
+            self.workspaces,
+            self.tasks,
+            self.results,
+            self.approvals,
+            self.decisions,
+            self.events,
+        )
+        snapshots = [deepcopy(repository._records) for repository in repositories]
+        try:
+            yield self
+        except BaseException:
+            for repository, snapshot in zip(repositories, snapshots):
+                repository._records = snapshot
+            raise
 
 
 def _task_sort_key(task: AgentTask) -> tuple:

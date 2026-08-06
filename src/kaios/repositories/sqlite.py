@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, TypeVar
@@ -85,6 +86,9 @@ class SQLiteDatabase:
 
     def __init__(self, path: str | Path = DEFAULT_DATABASE_PATH) -> None:
         self.path = Path(path)
+        self._active_connection: ContextVar[sqlite3.Connection | None] = ContextVar(
+            f"kaios_sqlite_connection_{id(self)}", default=None
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_schema()
 
@@ -97,6 +101,10 @@ class SQLiteDatabase:
 
     @contextmanager
     def read(self) -> Iterator[sqlite3.Connection]:
+        active_connection = self._active_connection.get()
+        if active_connection is not None:
+            yield active_connection
+            return
         connection = self.connect()
         try:
             yield connection
@@ -107,7 +115,12 @@ class SQLiteDatabase:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Commit an atomic unit of work, or roll it back on any failure."""
 
+        active_connection = self._active_connection.get()
+        if active_connection is not None:
+            yield active_connection
+            return
         connection = self.connect()
+        token = self._active_connection.set(connection)
         try:
             connection.execute("BEGIN IMMEDIATE")
             yield connection
@@ -116,6 +129,7 @@ class SQLiteDatabase:
             connection.rollback()
             raise
         finally:
+            self._active_connection.reset(token)
             connection.close()
 
     def _initialize_schema(self) -> None:
@@ -783,3 +797,10 @@ class SQLiteRepositories:
             self.database, self.workspaces, self.tasks, self.approvals
         )
         self.events = SQLiteEventRepository(self.database, self.tasks)
+
+    @contextmanager
+    def transaction(self) -> Iterator[SQLiteRepositories]:
+        """Coordinate several repository operations in one SQLite transaction."""
+
+        with self.database.transaction():
+            yield self
