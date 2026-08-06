@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -135,3 +137,44 @@ def test_rejection_prevents_execution(tmp_path):
             outcome.proposal_review.proposal,
             approval_id=outcome.resolved_approval.approval_id,
         )
+
+
+def test_direct_invalid_demo_choice_has_no_side_effects(tmp_path):
+    database_path = tmp_path / "kaios.db"
+    report_path = tmp_path / "reports"
+    runtime = build_runtime(database_path)
+
+    with pytest.raises(ValueError, match="approval_choice must be one of"):
+        runtime.run_demo(
+            seed="invalid choice seed",
+            report_output_location=str(report_path),
+            approval_choice="invalid",
+        )
+
+    assert runtime.repositories.workspaces.list() == []
+    with runtime.repositories.database.read() as connection:
+        for table in (
+            "tasks",
+            "results",
+            "decisions",
+            "approvals",
+            "action_proposals",
+            "task_events",
+        ):
+            assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+    assert not report_path.exists()
+
+
+def test_legacy_e2e_script_labels_all_output_as_offline_demo():
+    repository_root = Path(__file__).resolve().parent.parent
+
+    completed = subprocess.run(
+        [sys.executable, "scripts/e2e.py"],
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Evidence mode: MOCK / OFFLINE DEMO" in completed.stdout
+    assert "not live marketplace research" in completed.stdout

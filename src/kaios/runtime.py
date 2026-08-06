@@ -93,6 +93,11 @@ class KAIOSRuntime:
         report_output_location: str | None = None,
         approval_choice: str = "pending",
     ) -> DemoOutcome:
+        valid_approval_choices = {"none", "pending", "approve", "reject"}
+        if approval_choice not in valid_approval_choices:
+            raise ValueError(
+                "approval_choice must be one of: none, pending, approve, reject"
+            )
         if workspace_id == DEFAULT_WORKSPACE_ID:
             self.ensure_default_workspace()
         elif self.repositories.workspaces.get(workspace_id) is None:
@@ -106,10 +111,6 @@ class KAIOSRuntime:
         )
         if approval_choice == "none":
             return DemoOutcome(response=response)
-        if approval_choice not in {"pending", "approve", "reject"}:
-            raise ValueError(
-                "approval_choice must be one of: none, pending, approve, reject"
-            )
 
         review = self.create_demo_proposal(response)
         if review.approval is None:

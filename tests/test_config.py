@@ -1,3 +1,5 @@
+import pytest
+
 from kaios.config import load_config
 
 
@@ -59,3 +61,29 @@ def test_environment_supports_new_and_legacy_provider_names(monkeypatch):
 
     assert configured.model_provider == "fake"
     assert configured.provider_for_agent("product_intelligence") == "rules"
+
+
+def test_legacy_default_search_limit_maps_to_current_field(tmp_path, monkeypatch):
+    clear_model_environment(monkeypatch)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("default_search_limit: 7", encoding="utf-8")
+
+    config = load_config(str(config_path))
+
+    assert config.search_limit == 7
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "model_provider: [",
+        "- this\n- is\n- not\n- a\n- mapping",
+    ],
+)
+def test_invalid_yaml_or_root_structure_is_rejected(tmp_path, monkeypatch, content):
+    clear_model_environment(monkeypatch)
+    config_path = tmp_path / "invalid.yaml"
+    config_path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_config(str(config_path))

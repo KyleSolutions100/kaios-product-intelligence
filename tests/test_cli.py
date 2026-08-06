@@ -5,6 +5,7 @@ import re
 from typer.testing import CliRunner
 
 from kaios.main import app
+from kaios.repositories.sqlite import SQLiteRepositories
 
 
 runner = CliRunner()
@@ -183,3 +184,147 @@ def test_database_failure_is_reported_as_cli_error(tmp_path):
 
     assert result.exit_code == 1
     assert "Error:" in result.output
+
+
+def test_invalid_demo_choice_has_no_workflow_or_report_side_effects(tmp_path):
+    database_path = tmp_path / "kaios.db"
+    report_path = tmp_path / "reports"
+
+    result = invoke(
+        database_path,
+        "demo",
+        "--approval",
+        "invalid-choice",
+        "--output",
+        str(report_path),
+    )
+
+    assert result.exit_code == 1
+    assert "approval_choice must be one of" in result.output
+    repositories = SQLiteRepositories(database_path)
+    assert repositories.tasks.list("print-on-demand") == []
+    assert repositories.decisions.list("print-on-demand") == []
+    assert repositories.approvals.list("print-on-demand") == []
+    assert repositories.proposals.list("print-on-demand") == []
+    assert not report_path.exists()
+    with repositories.database.read() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM results").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM task_events").fetchone()[0] == 0
+
+
+def test_research_config_applies_supported_offline_settings(monkeypatch, tmp_path):
+    def forbidden_network(*args, **kwargs):
+        raise AssertionError("network access was attempted")
+
+    monkeypatch.delenv("ETSY_API_KEY", raising=False)
+    monkeypatch.setattr("httpx.Client", forbidden_network)
+    database_path = tmp_path / "kaios.db"
+    report_path = tmp_path / "configured-reports"
+    config_path = tmp_path / "research.yaml"
+    config_path.write_text(
+        f"""
+marketplace: configured-marketplace
+default_search_limit: 2
+output_dir: {report_path}
+model_provider: rules
+agent_model_providers:
+  product_intelligence: rules
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = invoke(
+        database_path,
+        "research",
+        "configured seed",
+        "--config",
+        str(config_path),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Model provider: rules" in result.output
+    repositories = SQLiteRepositories(database_path)
+    specialist = next(
+        task
+        for task in repositories.tasks.list("print-on-demand")
+        if task.task_type == "product_research"
+    )
+    assert specialist.input_data["marketplace"] == "configured-marketplace"
+    assert specialist.input_data["result_limit"] == 2
+    assert specialist.input_data["report_output_location"] == str(report_path)
+    assert (report_path / "latest.json").exists()
+
+
+def test_research_config_cli_options_override_file_values(tmp_path):
+    database_path = tmp_path / "kaios.db"
+    config_path = tmp_path / "research.yaml"
+    config_path.write_text(
+        """
+marketplace: configured-marketplace
+search_limit: 2
+output_dir: configured-reports
+model_provider: rules
+""".strip(),
+        encoding="utf-8",
+    )
+    override_reports = tmp_path / "override-reports"
+
+    result = invoke(
+        database_path,
+        "research",
+        "override seed",
+        "--config",
+        str(config_path),
+        "--marketplace",
+        "override-marketplace",
+        "--limit",
+        "1",
+        "--output",
+        str(override_reports),
+    )
+
+    assert result.exit_code == 0, result.output
+    repositories = SQLiteRepositories(database_path)
+    specialist = next(
+        task
+        for task in repositories.tasks.list("print-on-demand")
+        if task.task_type == "product_research"
+    )
+    assert specialist.input_data["marketplace"] == "override-marketplace"
+    assert specialist.input_data["result_limit"] == 1
+    assert specialist.input_data["report_output_location"] == str(override_reports)
+
+
+def test_missing_research_config_fails_before_database_creation(tmp_path):
+    database_path = tmp_path / "kaios.db"
+    missing_config = tmp_path / "missing.yaml"
+
+    result = invoke(
+        database_path,
+        "research",
+        "missing config seed",
+        "--config",
+        str(missing_config),
+    )
+
+    assert result.exit_code == 1
+    assert "configuration file not found" in result.output
+    assert not database_path.exists()
+
+
+def test_invalid_research_config_fails_before_database_creation(tmp_path):
+    database_path = tmp_path / "kaios.db"
+    invalid_config = tmp_path / "invalid.yaml"
+    invalid_config.write_text("model_provider: [", encoding="utf-8")
+
+    result = invoke(
+        database_path,
+        "research",
+        "invalid config seed",
+        "--config",
+        str(invalid_config),
+    )
+
+    assert result.exit_code == 1
+    assert "invalid YAML configuration" in result.output
+    assert not database_path.exists()

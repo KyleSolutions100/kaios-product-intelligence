@@ -11,6 +11,7 @@ from typing import Any, Callable, TypeVar
 import typer
 
 from kaios.approvals import ApprovalWorkflowError
+from kaios.config import load_config
 from kaios.core.contracts import DEFAULT_WORKSPACE_ID, ApprovalStatus
 from kaios.core.workspaces import WorkspaceBoundaryError
 from kaios.offline import OFFLINE_DEMO_SOURCE_TYPE
@@ -102,18 +103,39 @@ def workspace_list(
 def research(
     seed: str = typer.Argument(..., help="Product seed or research objective."),
     workspace: str = typer.Option(DEFAULT_WORKSPACE_ID, "--workspace", "-w"),
-    marketplace: str = typer.Option("etsy", help="Marketplace label."),
-    limit: int = typer.Option(3, min=1, max=100),
+    config: Path | None = typer.Option(
+        None, "--config", help="Compatible Phase 1 YAML configuration file."
+    ),
+    marketplace: str | None = typer.Option(None, help="Marketplace override."),
+    limit: int | None = typer.Option(None, min=1, max=100),
     output: Path | None = typer.Option(None, help="Report output directory."),
     database: Path = typer.Option(DEFAULT_DATABASE_PATH, "--database", "-d"),
 ) -> None:
+    configured_marketplace = "etsy"
+    configured_limit = 3
+    configured_output: str | None = None
+    if config is not None:
+        if not config.is_file():
+            raise ValueError(f"configuration file not found: {config}")
+        loaded = load_config(str(config))
+        provider = loaded.provider_for_agent("product_intelligence")
+        if provider != "rules":
+            raise ValueError(
+                "the offline CEO research command supports only the rules model "
+                f"provider, not {provider}"
+            )
+        configured_marketplace = loaded.marketplace
+        configured_limit = loaded.search_limit
+        configured_output = loaded.output_dir
     runtime = _runtime(database)
     response = runtime.submit_product_research(
         workspace_id=workspace,
         seed=seed,
-        marketplace=marketplace,
-        result_limit=limit,
-        report_output_location=str(output) if output else None,
+        marketplace=marketplace or configured_marketplace,
+        result_limit=limit if limit is not None else configured_limit,
+        report_output_location=(
+            str(output) if output is not None else configured_output
+        ),
     )
     _display_briefing(runtime, response)
 

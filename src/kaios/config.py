@@ -11,7 +11,7 @@ from .model_providers.factory import normalize_provider_name
 
 DEFAULTS = {
     "marketplace": "etsy",
-    "default_search_limit": 12,
+    "search_limit": 12,
     "output_dir": "reports",
     "confidence_threshold": "Medium",
     "model_provider": "rules",
@@ -24,8 +24,17 @@ def load_config(path: Optional[str] = None) -> ReportConfig:
     load_dotenv()
     cfg = {**DEFAULTS, "agent_model_providers": dict(DEFAULTS["agent_model_providers"])}
     if path and Path(path).exists():
-        with open(path) as f:
-            user = yaml.safe_load(f) or {}
+        try:
+            with open(path, encoding="utf-8") as f:
+                user = yaml.safe_load(f) or {}
+        except yaml.YAMLError as error:
+            raise ValueError(f"invalid YAML configuration: {error}") from error
+        if not isinstance(user, dict):
+            raise ValueError("configuration root must be a YAML mapping")
+        user = dict(user)
+        if "default_search_limit" in user and "search_limit" not in user:
+            user["search_limit"] = user["default_search_limit"]
+        user.pop("default_search_limit", None)
         cfg.update({k: v for k, v in user.items() if v is not None})
     if os.getenv("KAIOS_LLM_MODEL"):
         cfg["model"] = os.environ["KAIOS_LLM_MODEL"]

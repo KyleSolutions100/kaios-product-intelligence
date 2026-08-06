@@ -9,7 +9,7 @@ from kaios.config import ReportConfig
 from kaios.extractor import Extractor
 from kaios.analyzer import synthesize
 from kaios.model_providers import FakeModelProvider
-from kaios.reporter import write_reports
+from kaios.offline import OFFLINE_DEMO_SOURCE_TYPE, write_offline_demo_reports
 
 
 class _FakeResp:
@@ -67,18 +67,25 @@ def main():
         opps = synthesize(snippets, cfg.seed, cfg.model, provider=provider)
         assert opps, "No opportunities synthesized"
 
-        md, js = write_reports(cfg.seed, opps, cfg)
+        md, js = write_offline_demo_reports(cfg.seed, opps, cfg)
         assert md.exists(), f"Missing markdown: {md}"
         assert js.exists(), f"Missing json: {js}"
 
         data = json.loads(js.read_text())
         assert data["count"] == 1
         assert data["opportunities"][0]["title"] == "Mock Eco Invite"
+        assert data["evidence_mode"] == OFFLINE_DEMO_SOURCE_TYPE
+        assert "not live marketplace research" in data["disclaimer"]
+        markdown = md.read_text()
+        assert OFFLINE_DEMO_SOURCE_TYPE in markdown
+        assert "not live marketplace research" in markdown
 
+        print(f"Evidence mode: {OFFLINE_DEMO_SOURCE_TYPE}")
+        print("This evidence is not live marketplace research.")
         print("E2E passed")
         print(f"MD: {md}")
         print(f"JSON: {js}")
-        print(md.read_text()[:500])
+        print(markdown[:500])
 
 
 if __name__ == "__main__":
