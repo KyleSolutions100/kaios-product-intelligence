@@ -15,6 +15,9 @@ dependencies = [
     "pyyaml>=6,<7",
 ]
 
+[project.scripts]
+kaios = "kaios.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8,<9",
